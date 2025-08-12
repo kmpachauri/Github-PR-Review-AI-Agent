@@ -1,9 +1,10 @@
+import os
+import json
+import requests
 from app.llms.openrouter_llm import OpenRouterLLM
 from app.tasks.worker import celery_app
 from app.core.utils import save_result
 from app.core.config import settings
-import requests
-import json
 from app.core.logging import setup_logger
 
 logger = setup_logger()
@@ -11,14 +12,15 @@ logger = setup_logger()
 @celery_app.task(name="app.tasks.analyzer.analyze_pull_request")
 def analyze_pull_request(repo_url, pr_number, github_token=None):
     from celery import current_task
-    
     task_id = current_task.request.id
 
-    # Fetch PR files
+    # Headers for GitHub API
     headers = {
         "Authorization": f"token {github_token}" if github_token else "",
         "Accept": "application/vnd.github.v3+json"
     }
+
+    # Extract repo info and build PR files URL
     owner_repo = repo_url.replace("https://github.com/", "")
     files_url = f"{settings.GITHUB_API_BASE}/repos/{owner_repo}/pulls/{pr_number}/files"
 
@@ -32,31 +34,45 @@ def analyze_pull_request(repo_url, pr_number, github_token=None):
         save_result(task_id, {"task_id": task_id, "status": "failed", "error": f"GitHub API error: {str(e)}"})
         return
 
-    # Prepare input for AI agent
+    # Map extensions to languages
+    language_map = {
+        ".py": "Python",
+        ".js": "JavaScript",
+        ".ts": "TypeScript",
+        ".java": "Java",
+        ".go": "Go",
+        ".rb": "Ruby",
+        ".cpp": "C++",
+        ".c": "C",
+        ".rs": "Rust",
+        ".php": "PHP",
+        ".cs": "C#"
+    }
+
     input_files = []
+    file_languages = {}
     for file in files:
+        filename = file["filename"]
         patch = file.get("patch")
         if patch:
-            input_files.append(f"File: {file['filename']}\nPatch:\n{patch}\n\n")
+            ext = os.path.splitext(filename)[1]
+            lang = language_map.get(ext, "Unknown")
+            file_languages[filename] = lang
+            input_files.append(f"Filename: {filename} (Language: {lang})\nPatch:\n{patch}\n\n")
 
     if not input_files:
         save_result(task_id, {"task_id": task_id, "status": "failed", "error": "No valid file changes found."})
         return
 
+    # Build the AI prompt with language awareness
     prompt = (
         "You are a senior code review assistant.\n\n"
-        "Analyze the following code changes according to these : "
-        "- Code style and formatting issues"
-        "- Potential bugs or errors"
-        "- Performance improvements"
-        "- Best practices" 
-        "and return a structured JSON with:\n"
-        "- filename\n"
-        "- line number (if available)\n"
-        "- type \n"
-        "- description\n"
-        "- suggestion\n\n"
-        "Respond ONLY in JSON using this format:\n\n"
+        "Analyze the following multi-language code changes according to:\n"
+        "- Code style and formatting issues\n"
+        "- Potential bugs or errors\n"
+        "- Performance improvements\n"
+        "- Best practices\n\n"
+        "Respond ONLY in JSON using this format:\n"
         "{\n"
         "  \"files\": [\n"
         "    {\n"
@@ -66,22 +82,27 @@ def analyze_pull_request(repo_url, pr_number, github_token=None):
         "          \"type\": \"style\",\n"
         "          \"line\": 10,\n"
         "          \"description\": \"Line too long\",\n"
-        "          \"suggestion\": \"Break line into multiple lines\"\n"
+        "          \"suggestion\": \"Break line into multiple lines\",\n"
+        "          \"language-type\": \" Javascript\"\n"
         "        }\n"
         "      ]\n"
         "    }\n"
-        "  ]\n"
+        "  ],\n"
+        "  \"summary\": {\n"
+        "    \"total_files\": 0,\n"
+        "    \"total_issues\": 0,\n"
+        "    \"critical_issues\": 0\n"
+        "  }\n"
         "}\n\n"
+        "Each file may use a different programming language. Review accordingly.\n\n"
         "Code changes:\n" + "\n".join(input_files)
     )
 
-
-
+    # Call OpenRouter LLM
     llm_client = OpenRouterLLM(
         api_key=settings.OPENROUTER_API_KEY,
-        model=settings.MODEL_NAME  
+        model=settings.MODEL_NAME
     )
-
 
     try:
         logger.info("💬 Sending request to AI", extra={"task_id": task_id})
