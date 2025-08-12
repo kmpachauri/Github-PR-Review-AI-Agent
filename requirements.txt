@@ -8,3 +8,4 @@ pydantic
 requests
 pytest
 python-json-logger
+crewai

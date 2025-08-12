@@ -15,11 +15,12 @@ router = APIRouter()
 async def analyze_pr(request: PRRequest):
     try:
         logger.info("📩 Received /analyze-pr request", extra={"repo_url": request.repo_url, "pr_number": request.pr_number})
+        
         task = analyze_pull_request.apply_async(
         args=[request.repo_url, request.pr_number, request.github_token],
         queue="code-review"
         )
-        return {"task_id": task.id, "status": "pending"}
+        return {"task_id": task.id, "status": "queued"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
