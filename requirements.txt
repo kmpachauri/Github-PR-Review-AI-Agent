@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+celery
+redis
+python-dotenv
+httpx
+pydantic
+requests
+pytest
+python-json-logger
