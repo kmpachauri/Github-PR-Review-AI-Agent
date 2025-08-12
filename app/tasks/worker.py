@@ -1,5 +1,3 @@
-# app/tasks/worker.py
-
 from celery import Celery
 from app.core.config import settings
 from app.core.logging import setup_logger
@@ -17,7 +15,7 @@ celery_app.conf.task_routes = {
     "app.tasks.analyzer.*": {"queue": "analyzer"}
 }
 
-# Import your tasks here to register them with celery
-from app.tasks import analyzer  # noqa
+
+from app.tasks import analyzer  
 
 logger.info("⚙️ Celery worker initialized and tasks registered")
